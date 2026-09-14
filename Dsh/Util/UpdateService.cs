@@ -27,11 +27,11 @@ public class UpdateService
 {
     // GitHub raw 版本信息地址（version.json 统一放仓库根目录，push 到 main 后即可访问）
     private const string VersionJsonUrl =
-        "https://raw.githubusercontent.com/Ledgerbiggg/DHS-Desktop/main/version.json";
+        "https://raw.githubusercontent.com/Ledgerbiggg/DSH-Desktop/main/version.json";
 
     // 安装包下载模板（与 CI 产物命名一致）
     private const string DownloadUrlTemplate =
-        "https://github.com/Ledgerbiggg/DHS-Desktop/releases/download/v{0}/Dsh-Setup-{0}.exe";
+        "https://github.com/Ledgerbiggg/DSH-Desktop/releases/download/v{0}/Dsh-Setup-{0}.exe";
 
     private static readonly HttpClient Client = CreateClient(TimeSpan.FromSeconds(8));
 

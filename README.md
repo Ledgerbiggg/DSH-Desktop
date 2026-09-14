@@ -143,7 +143,7 @@ dsh web --no-open
 
 ### 方式一：下载发布包（推荐）
 
-1. 前往 [Releases](https://github.com/Ledgerbiggg/DHS-Desktop/releases) 页面下载最新 `Dsh-Setup-*.exe` 安装包。
+1. 前往 [Releases](https://github.com/Ledgerbiggg/DSH-Desktop/releases) 页面下载最新 `Dsh-Setup-*.exe` 安装包。
 2. 双击安装，安装完成后从开始菜单或桌面快捷方式启动 `Dsh`。
 3. 首次运行若提示未检测到 dsh，按上方教程安装后再「重新进入」。
 
@@ -166,8 +166,8 @@ dsh web --no-open
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/Ledgerbiggg/DHS-Desktop.git
-cd DHS-Desktop
+git clone https://github.com/Ledgerbiggg/DSH-Desktop.git
+cd DSH-Desktop
 
 # 2. 还原依赖并构建
 dotnet restore

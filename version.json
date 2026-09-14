@@ -1,5 +1,5 @@
 {
-    "version":  "0.2.5",
-    "notes":  "## v0.2.5 更新说明\r\n\u003e 生成时间：2026-09-08 20:54\r\n\r\n### 🐛 问题修复\r\n- 修复主窗口顶部边缘无法拖拽缩放：WPF-UI 标题栏接管顶边命中测试导致顶边永远轮不到缩放判定，现通过子类化窗口过程在顶部 8px（按 DPI 换算）恢复上下缩放及左上/右上角斜向缩放，正常显示与静默启动两条路径统一覆盖，窗口关闭时自动还原窗口过程\r\n\r\n共 1 项改动（无独立提交，随本次发版提交直接进入）。",
-    "url":  "https://github.com/Ledgerbiggg/DHS-Desktop/releases/latest"
+    "version":  "0.2.6",
+    "notes":  "## v0.2.6 更新说明\n> 生成时间：2026-09-14 21:41\n\n### 🐛 问题修复\n- 修复 GitHub 仓库更名（DHS-Desktop → DSH-Desktop）后，自动更新检查与安装包下载地址仍指向旧仓库的问题，README 与发版脚本中的仓库链接一并修正\n\n### 📝 文档\n- 新增需求工作流文档与 implement-requirement 技能\n\n### 🧹 杂项\n- 统一指令命名并精简 Makefile\n\n共 2 条提交，另有仓库更名地址修正随本次发版一并提交。",
+    "url":  "https://github.com/Ledgerbiggg/DSH-Desktop/releases/latest"
 }

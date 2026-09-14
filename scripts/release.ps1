@@ -48,5 +48,5 @@ git push origin main
 Write-Host ""
 Write-Host "Done! Version $newVer pushed to main." -ForegroundColor Green
 Write-Host "GitHub Actions will build & publish the installer automatically." -ForegroundColor Yellow
-Write-Host "  -> https://github.com/Ledgerbiggg/DHS-Desktop/actions" -ForegroundColor DarkGray
-Write-Host "  -> Release will appear at https://github.com/Ledgerbiggg/DHS-Desktop/releases" -ForegroundColor DarkGray
+Write-Host "  -> https://github.com/Ledgerbiggg/DSH-Desktop/actions" -ForegroundColor DarkGray
+Write-Host "  -> Release will appear at https://github.com/Ledgerbiggg/DSH-Desktop/releases" -ForegroundColor DarkGray

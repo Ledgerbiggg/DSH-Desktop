@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Dsh</RootNamespace>
     <AssemblyName>Dsh</AssemblyName>
-    <Version>0.2.5</Version>
+    <Version>0.2.6</Version>
     <!-- 应用图标：嵌入 exe -->
     <ApplicationIcon>Assets\deepseek-dark_48x48.ico</ApplicationIcon>
   </PropertyGroup>
