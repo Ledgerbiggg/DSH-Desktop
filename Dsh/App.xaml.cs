@@ -16,8 +16,13 @@ public partial class App : PrismApplication
     /// <summary>单实例唤出消息（与主窗口 WndProc 约定一致）</summary>
     private const int WmShowInstance = 0x0401;
 
-    /// <summary>主窗口标题：FindWindow 单实例唤出与静默启动补标题共用此约定</summary>
-    internal const string MainWindowCaption = "DeepSeek";
+    /// <summary>主窗口标题前缀：窗口实际标题为「deepseek harness v版本号」。
+    /// 单实例唤出按此前缀匹配——标题随版本变化，不能整串精确匹配</summary>
+    internal const string MainWindowCaption = "deepseek harness";
+
+    /// <summary>主窗口完整标题（deepseek harness + 应用版本号），静默启动补标题用</summary>
+    internal static string FullMainWindowCaption
+        => $"{MainWindowCaption} v{ViewModels.MainViewModel.GetVersionString()}";
 
     /// <summary>本次启动是否静默驻留托盘（InitializeShell 时判定，OnInitialized 复用）</summary>
     private bool _startHidden;
@@ -148,6 +153,7 @@ public partial class App : PrismApplication
         containerRegistry.RegisterSingleton<HotkeyManager>();
         containerRegistry.RegisterSingleton<TrayService>();
         containerRegistry.RegisterSingleton<UpdateService>();
+        containerRegistry.RegisterSingleton<DshUpdateService>();
         containerRegistry.RegisterSingleton<DshHostService>();
         containerRegistry.RegisterSingleton<ThemeService>();
 
@@ -208,16 +214,30 @@ public partial class App : PrismApplication
         base.OnInitialized();
     }
 
-    /// <summary>向已运行实例发送唤出消息</summary>
+    /// <summary>向已运行实例发送唤出消息：标题带版本号，
+    /// 用 EnumWindows 按标题前缀匹配，避免版本升级后 FindWindow 精确匹配失配导致唤不出</summary>
     private static void NotifyMainWindow()
     {
-        var hwnd = FindWindow(null, MainWindowCaption);
-        if (hwnd != IntPtr.Zero)
-            PostMessage(hwnd, WmShowInstance, IntPtr.Zero, IntPtr.Zero);
+        EnumWindows((hwnd, _) =>
+        {
+            var sb = new StringBuilder(256);
+            if (GetWindowText(hwnd, sb, sb.Capacity) > 0 &&
+                sb.ToString().StartsWith(MainWindowCaption, StringComparison.Ordinal))
+            {
+                PostMessage(hwnd, WmShowInstance, IntPtr.Zero, IntPtr.Zero);
+                return false; // 已找到目标窗口，停止枚举
+            }
+            return true;
+        }, IntPtr.Zero);
     }
 
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr FindWindow(string? className, string windowName);
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
     [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);

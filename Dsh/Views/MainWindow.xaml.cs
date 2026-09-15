@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Interop;
 using Dsh.Models;
 using Dsh.Util;
@@ -51,6 +53,9 @@ public partial class MainWindow : FluentWindow
         _settings = _config.LoadSettings();
         DataContext = vm;
 
+        // 终端输出走 VM 累积字符串：内容变化时刷新富文本并贴底滚动
+        vm.PropertyChanged += OnViewModelPropertyChanged;
+
         // 服务地址就绪（首次启动、失败重试、重启）后导航到带 token 的地址
         vm.NavigateRequested += (_, url) => Navigate(url);
         _trayService.ShowRequested += (_, _) => ToggleWindow();
@@ -88,8 +93,8 @@ public partial class MainWindow : FluentWindow
     ///    窗口创建那一瞬间就显示了（EnsureHandle 只是不调 Show，挡不住这个）；
     /// ② ShowInTaskbar 同样必须在句柄创建前关掉，否则任务栏图标闪现；
     /// ③ 句柄创建后 SetWindowText 补标题——窗口未布局时 XAML 的 Title 绑定
-    ///    不求值，HWND 标题为空会让 App.NotifyMainWindow 的 FindWindow 找不到
-    ///    窗口，导致二次启动唤出失效。
+    ///    不求值，HWND 标题为空会让 App.NotifyMainWindow 按标题前缀查找时
+    ///    找不到窗口，导致二次启动唤出失效。
     /// EnsureHandle 会触发 SourceInitialized（消息钩子/主题监听/热键句柄就绪），
     /// 但不触发 Loaded——WebView2 与首次导航推迟到窗口被呼出时再初始化。
     /// </summary>
@@ -100,7 +105,7 @@ public partial class MainWindow : FluentWindow
         ShowInTaskbar = false;
         // 仅创建 HWND，不显示窗口、不触发 Loaded
         var handle = new WindowInteropHelper(this).EnsureHandle();
-        SetWindowText(handle, App.MainWindowCaption);
+        SetWindowText(handle, App.FullMainWindowCaption);
         StartRuntime();
     }
 
@@ -138,6 +143,93 @@ public partial class MainWindow : FluentWindow
 
         // 启动时静默检查更新（不阻塞 UI）
         _ = _vm.CheckUpdateAtStartupAsync();
+        // 顶栏显示 npm 包 dsh 的本地版本（应用版本已挪到窗口标题右侧）
+        _ = _vm.LoadDshVersionAsync();
+    }
+
+    /// <summary>VM 属性变化：仅关心终端输出</summary>
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.ServiceTerminal))
+            UpdateTerminalOutput();
+    }
+
+    /// <summary>刷新终端富文本并按需贴底：用户上翻阅读或正在选中时不打扰（与升级终端一致）</summary>
+    private void UpdateTerminalOutput()
+    {
+        TerminalRun.Text = _vm.ServiceTerminal ?? "";
+        var distanceToBottom =
+            TerminalOutput.ExtentHeight - TerminalOutput.ViewportHeight - TerminalOutput.VerticalOffset;
+        if (distanceToBottom <= 20)
+            TerminalOutput.ScrollToVerticalOffset(TerminalOutput.ExtentHeight);
+    }
+
+    /// <summary>终端内 Enter/F5 = 重跑上一条命令（真终端习惯，标题栏亦有重启按钮）</summary>
+    private void TerminalOutput_OnPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Enter or Key.F5)) return;
+        e.Handled = true;
+        _vm.RetryServiceCommand.Execute();
+    }
+
+    /// <summary>空白区拖选的锚点：文本区按下为 null（交原生拖选），空白区按下锚定文档末尾</summary>
+    private TextPointer? _blankDragAnchor;
+    private bool _blankDragging;
+
+    /// <summary>按下：命中文本则放行原生拖选；落在文本下方空白区则自行接管——
+    /// RichTextBox 在空白处命不中文本位置、不会进入选择模式，导致必须精确点到
+    /// 最后一个字之后才能拖选。这里把空白区视作"文档末尾的一格"，
+    /// 复刻真终端"从最底部任意空白按下往上拖、整块选中"的手感</summary>
+    private void TerminalOutput_OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var position = e.GetPosition(TerminalOutput);
+        if (TerminalOutput.GetPositionFromPoint(position, true) is not null &&
+            !IsBeyondLastLine(position))
+            return; // 文本区：原生拖选（含双击选词等行为）
+
+        _blankDragAnchor = TerminalOutput.Document.ContentEnd;
+        _blankDragging = true;
+        TerminalOutput.Focus();            // 接管了按下事件，需自行保证键盘焦点，Ctrl+C 才能复制
+        TerminalOutput.CaptureMouse();     // 拖出控件外也能持续扩选
+        e.Handled = true;
+    }
+
+    private void TerminalOutput_OnPreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_blankDragging) return;
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            EndBlankDrag();
+            return;
+        }
+        // 空白处往上拖时吸附到最近文本行；仍在空白则继续锚在文档末尾
+        var current = TerminalOutput.GetPositionFromPoint(e.GetPosition(TerminalOutput), true)
+                      ?? TerminalOutput.Document.ContentEnd;
+        TerminalOutput.Selection.Select(_blankDragAnchor, current);
+        e.Handled = true;
+    }
+
+    private void TerminalOutput_OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_blankDragging) return;
+        EndBlankDrag();
+        e.Handled = true;
+    }
+
+    private void EndBlankDrag()
+    {
+        _blankDragging = false;
+        _blankDragAnchor = null;
+        TerminalOutput.ReleaseMouseCapture();
+    }
+
+    /// <summary>判断按下点是否位于最后一行文本之下（含行尾之后的行内空白不算）——
+    /// 用文档末尾位置的行首坐标做基准，避免 GetPositionFromPoint 在远处空白仍吸附出结果</summary>
+    private bool IsBeyondLastLine(System.Windows.Point position)
+    {
+        var end = TerminalOutput.Document.ContentEnd;
+        var rect = end.GetCharacterRect(LogicalDirection.Backward);
+        return position.Y > rect.Bottom + rect.Height / 2;
     }
 
     /// <summary>初始化 WebView2 并补上暂存的导航地址</summary>
@@ -146,6 +238,9 @@ public partial class MainWindow : FluentWindow
         try
         {
             await WebView.EnsureCoreWebView2Async();
+            // 页面加载前 WebView2 露出的是自身默认白底，与黑色终端来回闪；
+            // 固定为终端同色，从隐藏到导航完成的各窗口期保持一体黑
+            WebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(0x0C, 0x0C, 0x0C);
             if (_pendingUrl is not null)
                 Navigate(_pendingUrl);
         }
@@ -312,20 +407,23 @@ public partial class MainWindow : FluentWindow
         _dshHost.Stop();
     }
 
-    /// <summary>恢复上次窗口位置与大小</summary>
+    /// <summary>恢复上次窗口位置与大小；记忆值逐维度保底最小尺寸（MinWidth/MinHeight），
+    /// 防止历史坏数据（如最小化瞬间保存的 160×28 标题条尺寸）还原出小窗</summary>
     private void ApplySavedWindowState()
     {
         var win = _settings.Window;
+        // 记忆值小于窗口最小值（或为 NaN）时该维度回落到最小尺寸，保证窗口永不小于 360×400
+        Width = win.Width > MinWidth ? win.Width : MinWidth;
+        Height = win.Height > MinHeight ? win.Height : MinHeight;
         if (win.RememberPosition && win.Left is not null && win.Top is not null)
         {
             Left = win.Left.Value;
             Top = win.Top.Value;
         }
-        Width = win.Width;
-        Height = win.Height;
     }
 
-    /// <summary>记录窗口位置与大小到 settings.json</summary>
+    /// <summary>记录窗口位置与大小到 settings.json；
+    /// 尺寸不在合理区间时跳过保存（保留上次有效值），防止异常状态值污染记忆</summary>
     private void SaveWindowState()
     {
         var win = _settings.Window;
@@ -334,8 +432,12 @@ public partial class MainWindow : FluentWindow
             win.Left = Left;
             win.Top = Top;
         }
-        win.Width = Width;
-        win.Height = Height;
+        // 最小化/未布局瞬间的残留小值（如 160×28）不落盘，避免下次启动还原成小窗
+        if (Width >= MinWidth && Height >= MinHeight)
+        {
+            win.Width = Width;
+            win.Height = Height;
+        }
         _config.SaveSettings(_settings);
     }
 

@@ -23,11 +23,33 @@ public class DshHostService : IDisposable
     private Process? _process;
     private IntPtr _jobHandle;
 
+    /// <summary>最近一次启动失败的诊断输出（stderr/退出码/超时原因），成功启动后清空；供终端风格错误面板展示</summary>
+    public string LastError { get; private set; } = "";
+
+    /// <summary>LastError 拼接锁：stderr/退出事件来自线程池线程</summary>
+    private readonly object _lastErrorLock = new();
+
+    /// <summary>追加诊断行；设上限防异常进程的失控输出撑爆内存</summary>
+    private void AppendLastError(string line)
+    {
+        lock (_lastErrorLock)
+        {
+            if (LastError.Length < 8000)
+                LastError += line + Environment.NewLine;
+        }
+    }
+
     /// <summary>实际可访问的服务地址（含 token）</summary>
     public string Url { get; private set; } = FallbackUrl;
 
     /// <summary>是否成功取到带 token 的地址</summary>
     public bool HasToken => Url.Contains("token=", StringComparison.OrdinalIgnoreCase);
+
+    // 实际执行的 dsh 启动命令（不含 PowerShell 包装层），供终端回显
+    private const string DshLaunchArgs = "dsh web --no-open";
+
+    /// <summary>启动命令回显文本（终端 "PS> " 后的部分）</summary>
+    public string LaunchCommandText => DshLaunchArgs;
 
     /// <summary>
     /// 启动 dsh web 并等待其输出带 token 的地址。
@@ -38,6 +60,8 @@ public class DshHostService : IDisposable
     public async Task<string> StartAsync(int timeoutMs = 20000)
     {
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // 每次启动重置上次的诊断输出，避免重试时展示旧失败信息
+        LastError = "";
 
         try
         {
@@ -46,7 +70,7 @@ public class DshHostService : IDisposable
                 // dsh 是 npm 全局安装生成的 dsh.ps1，不是可执行文件，只能经 PowerShell 调用。
                 // 注意 -Command 后直接跟命令，不能加引号——加引号 PowerShell 只会回显字符串而不执行
                 FileName = "powershell",
-                Arguments = "-NoProfile -ExecutionPolicy Bypass -Command dsh web --no-open",
+                Arguments = "-NoProfile -ExecutionPolicy Bypass -Command " + DshLaunchArgs,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -68,11 +92,21 @@ public class DshHostService : IDisposable
             _process.ErrorDataReceived += (_, e) =>
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
-                    LoggerHelper.Error($"dsh web stderr: {e.Data.Trim()}");
+                {
+                    var line = e.Data.Trim();
+                    LoggerHelper.Error($"dsh web stderr: {line}");
+                    AppendLastError(line);
+                }
             };
 
             // 进程提前退出说明启动失败（dsh 未安装或端口已被占用），无需空等到超时
-            _process.Exited += (_, _) => tcs.TrySetResult("");
+            _process.Exited += (_, _) =>
+            {
+                tcs.TrySetResult("");
+                // 退出码是排查「装了但起不来」的关键线索（如 1=脚本报错、9009=命令不存在）
+                try { AppendLastError($"（dsh web 进程已退出，退出码 {_process.ExitCode}）"); }
+                catch { /* 进程对象已释放时拿不到退出码，忽略 */ }
+            };
 
             if (!_process.Start())
             {
@@ -90,11 +124,13 @@ public class DshHostService : IDisposable
             if (finished == tcs.Task && !string.IsNullOrEmpty(tcs.Task.Result))
             {
                 Url = tcs.Task.Result;
+                LastError = "";
                 LoggerHelper.Info($"dsh web 已就绪: {Url}");
                 return Url;
             }
 
             LoggerHelper.Error("dsh web 未在超时时间内输出地址（dsh 未安装，或 3080 端口已被占用？）");
+            AppendLastError($"等待 dsh web 输出服务地址超时（{timeoutMs / 1000} 秒）——dsh 未安装或损坏，或 3080 端口被占用。");
         }
         catch (Exception ex)
         {

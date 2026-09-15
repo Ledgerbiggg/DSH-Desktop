@@ -3,7 +3,7 @@
                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                   xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                   xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-                  WindowBackdropType="Mica"
+                  WindowBackdropType="None"
                   WindowCornerPreference="Default"
                   WindowStartupLocation="CenterScreen"
                   ExtendsContentIntoTitleBar="True"
@@ -23,7 +23,7 @@
         <ui:TitleBar x:Name="TitleBar" Grid.Row="0" Title="{Binding Title}"
                      CloseWindowByDoubleClickOnIcon="True" />
 
-        <!-- 顶部导航条：刷新 + 设置 -->
+        <!-- 顶部导航条：版本区（dsh 检查/升级状态）+ 按钮组（dsh 更新/重启/设置） -->
         <Border Grid.Row="1" Background="{DynamicResource ControlFillColorDefaultBrush}"
                 BorderBrush="{DynamicResource ControlElevationBorderBrush}" BorderThickness="0,0,0,1">
             <Grid Margin="8,0,14,0" Height="44">
@@ -32,10 +32,11 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <!-- 左侧版本号 + 新版本标识 -->
+                <!-- 左侧 dsh（npm 包）版本 + 新版本标识：应用自身版本已挪到窗口标题右侧 -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
-                    <TextBlock Text="{Binding Version, StringFormat='v{0}'}"
+                    <TextBlock Text="{Binding DshVersion}"
                                FontSize="13" FontWeight="SemiBold"
+                               ToolTip="npm 包 @deepseek-ai/dsh 本地版本"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                VerticalAlignment="Center" />
                     <!-- 新版本标识：有更新时显示，点击触发升级 -->
@@ -45,10 +46,22 @@
                         <TextBlock Text="{Binding UpdateBadgeText}" FontSize="12" FontWeight="SemiBold"
                                    Foreground="{DynamicResource SystemAccentColorPrimaryBrush}" />
                     </Button>
+                    <!-- dsh 检查/升级进行中状态文本，空闲时隐藏 -->
+                    <TextBlock Text="{Binding DshUpdateStatus}" FontSize="12" Margin="8,0,0,0"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Visibility="{Binding DshUpdateStatus, Converter={StaticResource StringNotEmptyToVisConverter}}" />
                 </StackPanel>
 
                 <!-- 右侧按钮组 -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <!-- 校验 DeepSeek harness（dsh）新版本：有新版时确认后经 npm 升级 -->
+                    <Button Style="{StaticResource TopBarButtonStyle}" Command="{Binding CheckDshUpdateCommand}"
+                            Width="34" Height="34" Padding="0" Margin="2,0,0,0"
+                            ToolTip="检查 DeepSeek harness（dsh）更新">
+                        <ui:SymbolIcon Symbol="ArrowCircleUp20" FontSize="16"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    </Button>
                     <!-- 重启本地服务：确认后终止 dsh web 再重新拉起，界面随之重载 -->
                     <Button Style="{StaticResource TopBarButtonStyle}" Command="{Binding RestartCommand}"
                             Width="34" Height="34" Padding="0" Margin="2,0,0,0"
@@ -69,8 +82,10 @@
             </Grid>
         </Border>
 
-        <!-- WebView2 内容区：加载 DeepSeek 本地服务 -->
-        <Grid Grid.Row="2" Background="{DynamicResource ControlFillColorDefaultBrush}">
+        <!-- WebView2 内容区：加载 DeepSeek 本地服务。
+             背景固定纯黑而非主题色——WebView2 隐藏/切换的间隙会露出这层底，
+             跟随主题会与黑色终端来回闪变（浅色主题下呈浅灰），观感割裂 -->
+        <Grid Grid.Row="2" Background="#0C0C0C">
             <!-- WebView2 是原生子窗口(HWND)，鼠标消息被它截获，主窗口收不到 WM_NCHITTEST，
                  因此左/右/下各留 8px 交给 WPF 命中，由 WindowChrome 提供边缘缩放；
                  最大化时无缩放需求，边距归零避免内容区出现空白边 -->
@@ -78,7 +93,15 @@
                 <wv2:WebView2.Style>
                     <Style TargetType="wv2:WebView2">
                         <Setter Property="Margin" Value="8,0,8,8" />
+                        <!-- 默认隐藏：启动失败(整屏终端)/启动中(遮罩)期间必须整体 Collapsed——
+                             WebView2 是原生子窗口(HWND)，WPF 层永远画在它下面(airspace)，
+                             不藏它的话黑色 HWND 会把终端和遮罩全盖住，只剩一团黑 -->
+                        <Setter Property="Visibility" Value="Collapsed" />
                         <Style.Triggers>
+                            <!-- 启动成功：终端清空且地址就绪才显示 WebView2 -->
+                            <DataTrigger Binding="{Binding IsWebVisible}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
                             <DataTrigger
                                 Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window}}"
                                 Value="Maximized">
@@ -89,38 +112,84 @@
                 </wv2:WebView2.Style>
             </wv2:WebView2>
 
-            <!-- 服务启动中遮罩：dsh 冷启动需数秒，期间避免显示无权限的空白页 -->
-            <Grid Background="{DynamicResource ApplicationBackgroundBrush}"
-                  Visibility="{Binding IsServiceStarting, Converter={StaticResource BoolToVisConverter}}">
+            <!-- 服务启动中遮罩：dsh 冷启动需数秒，期间避免显示无权限的空白页。
+                 背景与终端同色 #0C0C0C、文字固定浅灰——重启/重试的各窗口期（遮罩↔终端切换）
+                 始终一体黑，不再随主题闪浅灰。
+                 仅在无网页可看时显示（首启、失败重试）；网页正常时的重启交给页面自身
+                 「重连中」提示，不拿遮罩盖住页面 -->
+            <Grid Background="#0C0C0C"
+                  Visibility="{Binding IsStartOverlayVisible, Converter={StaticResource BoolToVisConverter}}">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <ui:ProgressRing IsIndeterminate="True" Width="34" Height="34" />
+                    <ui:ProgressRing IsIndeterminate="True" Width="34" Height="34" Foreground="#D4D4D4" />
                     <TextBlock Text="正在启动本地服务…" Margin="0,14,0,0" FontSize="13"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Foreground="#D4D4D4"
                                HorizontalAlignment="Center" />
                 </StackPanel>
             </Grid>
 
-            <!-- 服务启动失败提示：ServiceError 非空时显示，提供重试入口 -->
-            <Grid Background="{DynamicResource ApplicationBackgroundBrush}">
+            <!-- 整屏终端：ServiceTerminal 非空即铺满整个内容区（不再画中间小卡片）。
+                 Z 序在启动遮罩之上——首启一旦回显命令就盖住遮罩，重试/升级恢复期间也不会
+                 露出遮罩造成「报错一闪而过又黑屏」的观感；只有成功清屏才回到 WebView2 -->
+            <Grid Background="#0C0C0C">
                 <Grid.Style>
                     <Style TargetType="Grid">
                         <Setter Property="Visibility" Value="Visible" />
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding ServiceError}" Value="{x:Null}">
+                            <DataTrigger Binding="{Binding ServiceTerminal}" Value="{x:Null}">
                                 <Setter Property="Visibility" Value="Collapsed" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Grid.Style>
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32,0">
-                    <TextBlock Text="&#x26A0;" FontSize="30" HorizontalAlignment="Center"
-                               Foreground="{DynamicResource SystemFillColorCautionBrush}" />
-                    <TextBlock Text="{Binding ServiceError}" Margin="0,12,0,0" FontSize="13"
-                               TextWrapping="Wrap" TextAlignment="Center" MaxWidth="420"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                    <ui:Button Content="重试" Margin="0,18,0,0" HorizontalAlignment="Center"
-                               Appearance="Primary" Command="{Binding RetryServiceCommand}" />
-                </StackPanel>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <!-- 终端主体：整屏等宽输出（RichTextBox，与升级终端同款——空白处按下往上拖也能
+                         整块选中，拖选/Ctrl+C/右键复制全程丝滑），含每轮 "PS> dsh web …" 命令回显与报错。
+                         Enter/F5 重跑上一条命令（终端习惯），标题栏重启按钮亦可 -->
+                    <RichTextBox x:Name="TerminalOutput" Grid.Row="0" Margin="20,12,20,0"
+                                 IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                                 Background="Transparent" BorderThickness="0"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 SelectionBrush="#264F78"
+                                 PreviewKeyDown="TerminalOutput_OnPreviewKeyDown"
+                                 PreviewMouseLeftButtonDown="TerminalOutput_OnPreviewMouseLeftButtonDown"
+                                 PreviewMouseMove="TerminalOutput_OnPreviewMouseMove"
+                                 PreviewMouseLeftButtonUp="TerminalOutput_OnPreviewMouseLeftButtonUp">
+                        <RichTextBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Command="ApplicationCommands.Copy" Header="复制" />
+                            </ContextMenu>
+                        </RichTextBox.ContextMenu>
+                        <RichTextBox.Document>
+                            <FlowDocument PagePadding="0" Foreground="#D4D4D4"
+                                          FontFamily="Consolas" FontSize="13.5">
+                                <Paragraph Margin="0">
+                                    <Run x:Name="TerminalRun" />
+                                </Paragraph>
+                            </FlowDocument>
+                        </RichTextBox.Document>
+                    </RichTextBox>
+                    <!-- 命令运行中：终端末尾闪烁光标（IsServiceStarting 随 finally 收尾熄灭） -->
+                    <TextBlock Grid.Row="1" Text="▍" Margin="20,2,0,4" HorizontalAlignment="Left"
+                               FontFamily="Consolas" FontSize="13.5" Foreground="#D4D4D4"
+                               Visibility="{Binding IsServiceStarting, Converter={StaticResource BoolToVisConverter}}">
+                        <TextBlock.Triggers>
+                            <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0"
+                                                         Duration="0:0:0.55" AutoReverse="True"
+                                                         RepeatBehavior="Forever" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                        </TextBlock.Triggers>
+                    </TextBlock>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>

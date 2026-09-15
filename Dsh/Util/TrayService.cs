@@ -29,7 +29,7 @@ public class TrayService : IDisposable
             // 单文件发布下 pack URI 与磁盘 Assets 副本均不可用，
             // 统一走 AppIcon：从 exe 内嵌 Win32 图标提取（详见 AppIcon 注释）
             Icon = AppIcon.GetTrayIcon(),
-            Text = "DeepSeek",
+            Text = "deepseek harness",
             Visible = true,
             ContextMenuStrip = BuildMenu(),
         };
