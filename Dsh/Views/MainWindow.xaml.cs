@@ -292,7 +292,7 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    /// <summary>窗口消息处理：WM_HOTKEY + 单实例唤出</summary>
+    /// <summary>窗口消息处理：WM_HOTKEY + 单实例唤出 / 安装程序请求退出</summary>
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (_hotkeyManager.HandleMessage(msg, wParam))
@@ -303,6 +303,13 @@ public partial class MainWindow : FluentWindow
         {
             handled = true;
             ToggleWindow();
+        }
+        else if (msg == App.WmExitForUpdate)
+        {
+            handled = true;
+            // 安装程序请求退出：必须走应用级退出（RequestShutdown 会先置 IsExiting），
+            // 否则 MainWindow_OnClosing 会把关闭拦回托盘，exe 仍被占用导致安装失败
+            App.RequestShutdown();
         }
         return IntPtr.Zero;
     }
