@@ -260,11 +260,32 @@ public class SettingsViewModel : BindableBase
         App.RequestShutdown();
     }
 
-    /// <summary>读取开机自启状态</summary>
+    /// <summary>读取开机自启实际生效状态：Run 项存在，且未被 Windows 启动项审批标记为禁用。
+    /// 只看 Run 项会误报——被禁用过的项目 Run 项仍在，界面显示已勾选却永远不会自启</summary>
     private static bool GetAutoStart()
     {
         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");
-        return key?.GetValue("Dsh") is string v && !string.IsNullOrEmpty(v);
+        if (key?.GetValue("Dsh") is not string v || string.IsNullOrEmpty(v))
+            return false;
+        return !IsAutoStartBlocked();
+    }
+
+    /// <summary>Windows 在 StartupApproved 里记录启动项的启停，优先级高于 Run 项本身；
+    /// 首字节非 02（常见 01/03）即表示已被任务管理器或优化工具禁用，
+    /// 此时 Run 项写得再对也不会自启</summary>
+    private static bool IsAutoStartBlocked()
+    {
+        try
+        {
+            using var approved = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+            return approved?.GetValue("Dsh") is byte[] { Length: > 0 } state && state[0] != 2;
+        }
+        catch (Exception ex)
+        {
+            LoggerHelper.Error("读取开机自启审批状态失败", ex);
+            return false;
+        }
     }
 
     /// <summary>开启/关闭开机自启：写入或删除注册表 Run 项</summary>
@@ -278,14 +299,37 @@ public class SettingsViewModel : BindableBase
         {
             if (!string.IsNullOrEmpty(exePath))
             {
-                key.SetValue("Dsh", exePath);
+                // 加引号：安装路径含空格（如 Program Files）时不加引号会被拆成多个参数而启动失败
+                key.SetValue("Dsh", $"\"{exePath}\"");
                 LoggerHelper.Info($"已写入开机自启: {exePath}");
             }
+            // 关键：只写 Run 项不够——StartupApproved 中残留的禁用标记优先级更高，
+            // 会造成"设置里勾了却永远不自启"。开启时一并清除该标记
+            ClearStartupBlockFlag();
         }
         else
         {
             key.DeleteValue("Dsh", false);
             LoggerHelper.Info("已移除开机自启");
+        }
+    }
+
+    /// <summary>清除 Windows 启动项审批中的禁用标记，让 Run 项真正生效</summary>
+    private static void ClearStartupBlockFlag()
+    {
+        try
+        {
+            using var approved = Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", writable: true);
+            if (approved?.GetValue("Dsh") is not null)
+            {
+                approved.DeleteValue("Dsh", false);
+                LoggerHelper.Info("已清除开机自启的禁用标记");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerHelper.Error("清除开机自启禁用标记失败", ex);
         }
     }
 
