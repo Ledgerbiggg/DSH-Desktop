@@ -57,19 +57,18 @@ Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 {#MyAppName}"; Fla
 [Code]
 // 覆盖安装前先关掉正在运行的旧版本。
 // 背景：本程序托盘常驻，"点 ×" 是隐藏到托盘而非退出，主窗口会拦截 WM_CLOSE，
-// Inno 的 Restart Manager 因此关不掉它，旧安装包会弹「Setup was unable to
-// automatically close all applications」。
-// 两步走：① 以 --exit-for-update 二次启动应用，由应用内单实例消息通道请求
-// 已运行实例优雅退出（会顺带停掉托管的 dsh web）；② 旧版本不认该开关或退出超时，
-// 用 taskkill 强杀进程树兜底（/T 一并结束 dsh web 等子进程）。
+// Inno 的 Restart Manager 因此关不掉它，会弹「Setup was unable to automatically
+// close all applications」。
+// 这里只做一件事：taskkill 结束进程树（/T 一并结束托管的 dsh web 子进程；
+// 即便有残留，下次启动的 KillStaleDshProcesses 也会清理）。
+// ⚠️ 严禁改成 Exec('{app}\应用.exe', '--exit-for-update', ..., ewWaitUntilTerminated)
+// 之类的"先请应用优雅退出"：旧版本不认识该开关，会把这次启动当成正常启动并常驻
+// 托盘永不退出，安装程序将永久卡在「Preparing to Install」页面（无响应且无取消按钮）。
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
   NeedsRestart := False;
-  Exec(ExpandConstant('{app}\{#MyAppExeName}'), '--exit-for-update', '',
-       SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(1500);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM "{#MyAppExeName}"',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Result := '';
